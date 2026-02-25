@@ -105,22 +105,27 @@ async def on_ready():
     print(f"Logged in as {bot.user}")
     for guild in bot.guilds:
         try:
-            invite_tracker[guild.id] = {inv.code: inv for inv in await guild.invites()}
-        except:
-            pass
+            invites = await guild.invites()
+            invite_tracker[guild.id] = {inv.code: inv for inv in invites}
+            print(f"Loaded {len(invites)} invites for guild {guild.name}")
+        except Exception as e:
+            print(f"Failed to load invites for {guild.name}: {e}")
     await tree.sync()
     print("Slash commands synced.")
 
 @bot.event
 async def on_invite_create(invite):
     invite_tracker[invite.guild.id][invite.code] = invite
+    print(f"New invite created: {invite.code} by {invite.inviter}")
 
 @bot.event
 async def on_member_join(member):
     guild = member.guild
+    print(f"Member joined: {member} in {guild.name}")
     try:
         new_invites = {inv.code: inv for inv in await guild.invites()}
-    except:
+    except Exception as e:
+        print(f"Failed to get invites: {e}")
         return
 
     old_invites = invite_tracker.get(guild.id, {})
@@ -130,11 +135,13 @@ async def on_member_join(member):
         old = old_invites.get(code)
         if old and inv.uses > old.uses:
             used_inviter = inv.inviter
+            print(f"Invite used: {code} by inviter {used_inviter}")
             break
 
     invite_tracker[guild.id] = new_invites
 
     if not used_inviter:
+        print(f"Could not find who invited {member} - no invite use change detected")
         return
 
     if used_inviter.id not in user_invites:
@@ -142,6 +149,7 @@ async def on_member_join(member):
 
     account_age = (datetime.datetime.utcnow() - member.created_at.replace(tzinfo=None)).days
     flags = get_alt_flags(used_inviter, member, user_invites[used_inviter.id])
+    print(f"Flags for {member}: {flags}")
 
     user_invites[used_inviter.id].append({
         "id": member.id,
@@ -150,6 +158,8 @@ async def on_member_join(member):
         "account_age_days": account_age,
         "flags": flags
     })
+
+    print(f"Saved invite data. {used_inviter} now has {len(user_invites[used_inviter.id])} tracked invites")
 
     if len(flags) >= 1:
         settings = alert_settings.get(guild.id)
@@ -175,11 +185,13 @@ async def on_member_join(member):
 
         if log_channel:
             await log_channel.send(embed=embed)
+            print(f"Alert sent to {log_channel.name}")
         else:
             try:
                 await owner.send(embed=embed)
+                print("Alert sent to owner DM")
             except:
-                pass
+                print("Failed to send alert to owner DM")
 
 async def get_all_accounts(guild, user):
     accounts = []
@@ -198,6 +210,7 @@ async def get_all_accounts(guild, user):
 @app_commands.checks.has_permissions(manage_guild=True)
 async def altacc(interaction: discord.Interaction, user: discord.Member):
     data = user_invites.get(user.id, [])
+    print(f"altacc command used for {user}, data: {data}")
 
     if not data:
         await interaction.response.send_message(
@@ -305,7 +318,7 @@ async def timeoutall(interaction: discord.Interaction, user: discord.Member, min
     timed_out = []
     failed = []
 
-    until = datetime.datetime.utcnow() + datetime.timedelta(minutes=minutes)
+    until = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=minutes)
 
     for member in accounts:
         try:
